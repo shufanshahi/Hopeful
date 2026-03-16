@@ -5,7 +5,7 @@ import math
 import copy
 from torch.nn import Parameter
 
-def build_tva_node_feature(text_features, video_features, audio_features, lengths):
+def build_tva_node_feature(text_features, video_features, audio_features, lengths, no_cuda):
     text_nodes = []
     audio_nodes = []
     video_nodes = []
@@ -16,10 +16,11 @@ def build_tva_node_feature(text_features, video_features, audio_features, length
         text_nodes.append(text_features[:lengths[idx], idx, :])
         audio_nodes.append(audio_features[:lengths[idx], idx, :])
         video_nodes.append(video_features[:lengths[idx], idx, :])
-
-    text_nodes = torch.cat(text_nodes, dim=0).cuda()
-    audio_nodes = torch.cat(audio_nodes, dim=0).cuda()
-    video_nodes = torch.cat(video_nodes, dim=0).cuda()
+        
+    if not no_cuda:
+        text_nodes = torch.cat(text_nodes, dim=0).cuda()
+        audio_nodes = torch.cat(audio_nodes, dim=0).cuda()
+        video_nodes = torch.cat(video_nodes, dim=0).cuda()
 
     return text_nodes, audio_nodes, video_nodes
 

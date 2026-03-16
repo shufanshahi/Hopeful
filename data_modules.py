@@ -70,7 +70,7 @@ class IEMOCAP4(Dataset):
     def __len__(self):
         return self.length
     
-    def padding_funtion(self, data):
+    def collate_fn(self, data):
 
         unpadded_data = pd.DataFrame(data)
         result = []
@@ -151,7 +151,7 @@ class IEMOCAP(Dataset):
     def __len__(self):
         return self.length
     
-    def padding_funtion(self, data):
+    def collate_fn(self, data):
         
         unpadded_data = pd.DataFrame(data)
         result = []
@@ -223,7 +223,7 @@ class MELD(Dataset):
             return_emotions += self.videoLabels[videoIds]
         return return_emotions
     
-    def padding_funtion(self, data):
+    def collate_fn(self, data):
         
         unpadded_data = pd.DataFrame(data)
         result = []
