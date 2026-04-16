@@ -331,3 +331,152 @@ class Simple_GCN(torch.nn.Module):
             return output + self.bias
         else:
             return output
+
+
+class SentenceMatchingModule(nn.Module):
+    """
+    A module for learning sentence-level matching through pairwise embedding comparisons.
+    Creates paired embeddings by comparing each embedding with reference embeddings
+    within specified temporal windows.
+    """
+
+    def __init__(self, hidden_dimension, dropout, window_size):
+        """
+        Args:
+            hidden_dimension: Dimension of input embeddings
+            dropout: Dropout rate (reserved for potential future use)
+            window_size: Size of temporal window for pairing. -1 for all pairs, >0 for sliding window
+        """
+        super().__init__()
+        self.window_size = window_size
+        
+        # Dimension of concatenated pairs: [embedding1, embedding2]
+        pairwise_hidden_dimension = 2 * hidden_dimension
+        
+        # Binary classification head for matching prediction
+        self.classification_head = nn.Sequential(
+            nn.Linear(pairwise_hidden_dimension, 2)
+        )
+
+    def forward(self, embeddings, reference_embeddings=None, sequence_lengths=[]):
+        """
+        Forward pass for sentence matching.
+        
+        Args:
+            embeddings: Tensor of input embeddings
+            reference_embeddings: Optional reference embeddings for comparison. Defaults to embeddings
+            sequence_lengths: List of sequence lengths for each dialogue/document
+            
+        Returns:
+            logits: Classification logits for each pairwise comparison
+        """
+        # Use input embeddings as reference if not provided
+        if reference_embeddings is None:
+            reference_embeddings = embeddings
+        
+        # Create pairwise comparisons
+        pairwise_embeddings = self._create_pairwise_embeddings(
+            embeddings, 
+            reference_embeddings, 
+            sequence_lengths,
+            self.window_size
+        )
+        
+        # Generate binary classification logits
+        logits = self.classification_head(pairwise_embeddings)
+
+        return logits
+
+    def _create_pairwise_embeddings(self, embeddings, reference_embeddings, 
+                                    sequence_lengths, window_size):
+        """
+        Create pairwise embeddings by concatenating embeddings with reference embeddings.
+        
+        Supports two modes:
+        - window_size == -1: Create all possible pairs within each sequence
+        - window_size > 0: Create pairs within sliding windows
+        
+        Args:
+            embeddings: Input embeddings
+            reference_embeddings: Reference embeddings to pair with
+            sequence_lengths: List of sequence lengths
+            window_size: Size of pairing window (-1 for all, >0 for sliding window)
+            
+        Returns:
+            pairwise_embeddings: Concatenated pairwise embeddings flattened to (N, 2*hidden_dim)
+        """
+        position = 0
+        pairwise_embedding_list = []
+        embedding_dimension = embeddings.size(-1)
+        
+        if window_size == -1:
+            # Mode 1: Create all pairwise combinations within each sequence
+            for sequence_length in sequence_lengths:
+                pairwise_embeddings = torch.cat(
+                    [
+                        # Expand embeddings to all combinations (seq_len, seq_len, hidden_dim)
+                        embeddings[position:position + sequence_length, None, :].repeat(
+                            1, sequence_length, 1
+                        ),
+                        # Expand reference embeddings to all combinations (seq_len, seq_len, hidden_dim)
+                        reference_embeddings[None, position:position + sequence_length, :].repeat(
+                            sequence_length, 1, 1
+                        ),
+                    ],
+                    dim=-1,
+                )
+                # Flatten to (seq_len^2, 2*hidden_dim)
+                pairwise_embedding_list.append(
+                    pairwise_embeddings.view(-1, 2 * embedding_dimension)
+                )
+                position += sequence_length
+            
+            concatenated_pairwise = torch.cat(pairwise_embedding_list, dim=0)
+
+        elif window_size > 0:
+            # Mode 2: Create pairwise combinations within sliding windows
+            for sequence_length in sequence_lengths:
+                window_position = 0
+                
+                # Process each window in the sequence
+                for window_idx in range(math.ceil(sequence_length / window_size)):
+                    # Handle last window which may be smaller
+                    if (window_idx == math.ceil(sequence_length / window_size) - 1 
+                            and sequence_length % window_size != 0):
+                        current_window_length = sequence_length % window_size
+                    else:
+                        current_window_length = window_size
+                    
+                    # Create pairs within current window
+                    pairwise_embeddings = torch.cat(
+                        [
+                            # Expand embeddings in current window
+                            embeddings[
+                                position + window_position : position + window_position + current_window_length, 
+                                None, 
+                                :
+                            ].repeat(1, current_window_length, 1),
+                            # Expand reference embeddings in current window
+                            reference_embeddings[
+                                None, 
+                                position + window_position : position + window_position + current_window_length, 
+                                :
+                            ].repeat(current_window_length, 1, 1),
+                        ],
+                        dim=-1,
+                    )
+                    # Flatten window pairs to (window_len^2, 2*hidden_dim)
+                    pairwise_embedding_list.append(
+                        pairwise_embeddings.view(-1, 2 * embedding_dimension)
+                    )
+                    window_position += window_size
+                
+                position += sequence_length
+            
+            concatenated_pairwise = torch.cat(pairwise_embedding_list, dim=0)
+        else:
+            raise NotImplementedError(
+                "Window size must be greater than 0 or equal to -1"
+            )
+
+        return concatenated_pairwise
