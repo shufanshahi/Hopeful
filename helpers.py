@@ -75,7 +75,7 @@ class EdgeWeightedHeterGCN(torch.nn.Module):
             num_layers
         )
 
-    def _build_heterogeneous_edges_without_weights(self, features, num_modalities, 
+    def _build_cross_modal_edges(self, features, num_modalities, 
                                                     sequence_lengths, past_window, 
                                                     future_window):
         """
@@ -145,6 +145,62 @@ class EdgeWeightedHeterGCN(torch.nn.Module):
             edge_index = edge_index.cuda()
 
         return edge_index
+
+    def _construct_gcn_normalized_adj(self, edge_index, edge_weights=None, 
+                                      num_nodes=100, no_cuda=False):
+        """
+        Construct GCN-normalized adjacency matrix from edge indices and weights.
+        
+        Applies normalization: D^(-1/2) * A * D^(-1/2) where D is the degree matrix
+        and A is the adjacency matrix. This normalization prevents exploding/vanishing
+        gradients in graph convolutions.
+        
+        Args:
+            edge_index: Tensor of shape (2, num_edges) with edge connections
+            edge_weights: Optional tensor of edge weights. If None, defaults to ones
+            num_nodes: Total number of nodes in the graph
+            
+        Returns:
+            normalized_adjacency: Normalized adjacency matrix (dense)
+        """
+        # Initialize edge weights if not provided
+        if edge_weights is not None:
+            edge_weights = edge_weights.squeeze()
+        else:
+            edge_weights = torch.ones(edge_index.size(1))
+            if not self.no_cuda:
+                edge_weights = edge_weights.cuda()
+
+        # Create sparse adjacency matrix from edge indices and weights
+        sparse_adjacency = torch.sparse_coo_tensor(
+            edge_index,
+            edge_weights,
+            size=(num_nodes, num_nodes)
+        )
+        
+        # Convert to dense for normalization
+        adjacency_matrix = sparse_adjacency.to_dense()
+        
+        # Compute degree normalization: D^(-1/2)
+        degree_sum = torch.sum(adjacency_matrix, dim=1)
+        inverse_sqrt_degree = torch.pow(degree_sum, -0.5)
+        inverse_sqrt_degree[inverse_sqrt_degree == float('inf')] = 0
+        
+        # Create diagonal matrix from inverse square root degrees
+        inverse_sqrt_degree_matrix = torch.diag_embed(inverse_sqrt_degree)
+        
+        # Apply normalization: D^(-1/2) * A * D^(-1/2)
+        normalized_adjacency = torch.matmul(
+            inverse_sqrt_degree_matrix,
+            torch.matmul(adjacency_matrix, inverse_sqrt_degree_matrix)
+        )
+        
+        # Ensure tensor is on correct device
+        if not self.no_cuda and torch.cuda.is_available():
+            normalized_adjacency = normalized_adjacency.cuda()
+
+        return normalized_adjacency
+
 
 
 class Heterogeneous_GraphConvL(torch.nn.Module):
