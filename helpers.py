@@ -45,9 +45,40 @@ def _get_clones(module, layer_num):
 
 
 
-class Heterogeneous_Graph(torch.nn.Module):
+
+
+
+
+
+
+
+
+
+
+
+
+class EdgeWeightedHeterGCN(torch.nn.Module):
+    def __init__(self, input_dim, graph_conv_layer, num_layers, dropout_rate, no_cuda):
+        super(EdgeWeightedHeterGCN, self).__init__()
+        self.num_layers = num_layers
+        self.no_cuda = no_cuda
+        
+        self.edge_weights = None
+        
+        self.heterogeneous_gcn_layers = _get_clones(graph_conv_layer, num_layers)
+        self.mlp_layers = _get_clones(
+            nn.Sequential(
+                nn.Linear(input_dim, input_dim),
+                nn.LeakyReLU(),
+                nn.Dropout(dropout_rate)
+            ),
+            num_layers
+        )
+
+
+class Heterogeneous_GraphConvL(torch.nn.Module):
     def __init__(self, input_feature_size, dropout=0.3, no_cuda=False):
-        super(Heterogeneous_Graph, self).__init__()
+        super(Heterogeneous_GraphConvL, self).__init__()
         self.no_cuda = no_cuda
         self.heterogeneous_gcn = Simple_GCN(input_feature_size, input_feature_size)
 
