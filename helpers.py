@@ -75,6 +75,77 @@ class EdgeWeightedHeterGCN(torch.nn.Module):
             num_layers
         )
 
+    def _build_heterogeneous_edges_without_weights(self, features, num_modalities, 
+                                                    sequence_lengths, past_window, 
+                                                    future_window):
+        """
+        Build heterogeneous edges connecting nodes across different modalities.
+        
+        Args:
+            features: Input features
+            num_modalities: Number of modalities
+            sequence_lengths: List of sequence lengths for each dialogue
+            past_window: Context window size for past nodes (-1 for unlimited)
+            future_window: Context window size for future nodes (-1 for unlimited)
+            
+        Returns:
+            edge_index: Tensor of shape (2, num_edges) containing edge connections
+        """
+        edge_indices = []
+        total_sequence_length = sum(sequence_lengths)
+        all_node_indices = list(range(total_sequence_length * num_modalities))
+        modality_nodes = [None] * num_modalities
+
+        # Map nodes by modality
+        for modality_idx in range(num_modalities):
+            modality_nodes[modality_idx] = all_node_indices[
+                modality_idx * total_sequence_length:(modality_idx + 1) * total_sequence_length
+            ]
+
+        # Build edges for each sequence and modality pair
+        position = 0
+        for sequence_length in sequence_lengths:
+            for src_modality, tgt_modality in permutations(range(num_modalities), 2):
+                for node_position, source_node in enumerate(
+                    modality_nodes[src_modality][position:position + sequence_length]
+                ):
+                    # Determine target nodes based on window configuration
+                    if past_window == -1 and future_window == -1:
+                        # Connect to all nodes in sequence
+                        target_nodes = modality_nodes[tgt_modality][
+                            position:position + sequence_length
+                        ]
+                    elif past_window == -1:
+                        # Connect to current and future nodes
+                        target_nodes = modality_nodes[tgt_modality][
+                            position:min(position + sequence_length, 
+                                       position + node_position + future_window + 1)
+                        ]
+                    elif future_window == -1:
+                        # Connect to past and current nodes
+                        target_nodes = modality_nodes[tgt_modality][
+                            max(position, position + node_position - past_window):
+                            position + sequence_length
+                        ]
+                    else:
+                        # Connect within temporal window
+                        target_nodes = modality_nodes[tgt_modality][
+                            max(position, position + node_position - past_window):
+                            min(position + sequence_length, 
+                                position + node_position + future_window + 1)
+                        ]
+                    
+                    edge_indices.extend(list(product([source_node], target_nodes)))
+            
+            position += sequence_length
+
+        # Convert to tensor
+        edge_index = torch.tensor(edge_indices).permute(1, 0)
+        if not self.no_cuda:
+            edge_index = edge_index.cuda()
+
+        return edge_index
+
 
 class Heterogeneous_GraphConvL(torch.nn.Module):
     def __init__(self, input_feature_size, dropout=0.3, no_cuda=False):
