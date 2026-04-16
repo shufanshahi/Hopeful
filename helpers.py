@@ -201,6 +201,91 @@ class EdgeWeightedHeterGCN(torch.nn.Module):
 
         return normalized_adjacency
 
+    def forward(self, modal_features, sequence_lengths, past_window, future_window, 
+                edge_index=None):
+        """
+        Forward pass through the heterogeneous edge-weighted graph convolutional network.
+        
+        Args:
+            modal_features: Tuple of feature tensors, one per modality
+            sequence_lengths: List of sequence lengths for each dialogue
+            past_window: Temporal context window for past connections (-1 for unlimited)
+            future_window: Temporal context window for future connections (-1 for unlimited)
+            edge_index: Optional pre-computed edge indices. If None, computed dynamically
+            
+        Returns:
+            output_features: Tuple of output feature tensors, one per modality
+            edge_index: Edge indices used in the forward pass
+        """
+        # Determine number of modalities
+        num_modalities = len(modal_features)
+        
+        # Concatenate features from all modalities
+        concatenated_features = torch.cat(modal_features, dim=0)
+
+        # Build edge indices if not provided
+        if edge_index is None:
+            edge_index = self._build_cross_modal_edges(
+                concatenated_features, 
+                num_modalities,
+                sequence_lengths, 
+                past_window, 
+                future_window
+            )
+        
+        # Determine number of edges required
+        required_edge_count = edge_index.size(1)
+        tensor_device = concatenated_features.device
+        
+        # Initialize or expand learnable edge weights
+        if self.edge_weights is None:
+            self.edge_weights = nn.Parameter(
+                torch.ones(required_edge_count, device=tensor_device)
+            )
+            self.register_parameter('edge_weights', self.edge_weights)
+        elif self.edge_weights.size(0) < required_edge_count:
+            # Expand edge weights if more edges are needed
+            num_new_edges = required_edge_count - self.edge_weights.size(0)
+            new_edge_weights = nn.Parameter(
+                torch.ones(num_new_edges, device=tensor_device)
+            )
+            self.edge_weights = nn.Parameter(
+                torch.cat([self.edge_weights, new_edge_weights], dim=0)
+            )
+            self.register_parameter('edge_weights', self.edge_weights)
+        
+        # Get weights for current edges
+        current_edge_weights = self.edge_weights[:required_edge_count]
+
+        # Construct normalized adjacency matrix with edge weights
+        weighted_adjacency = self._construct_gcn_normalized_adj(
+            edge_index,
+            current_edge_weights,
+            num_nodes=concatenated_features.size(0),
+            no_cuda=self.no_cuda
+        )
+        
+        # Initialize accumulated features
+        accumulated_features = concatenated_features
+        
+        # Apply graph convolution and MLP layers
+        for layer_idx in range(self.num_layers):
+            # Graph convolution
+            concatenated_features = self.heterogeneous_gcn_layers[layer_idx](
+                concatenated_features, 
+                num_modalities, 
+                weighted_adjacency
+            )
+            # Add MLP transformation and sum skip connection
+            accumulated_features = accumulated_features + self.mlp_layers[layer_idx](
+                concatenated_features
+            )
+        
+        # Split accumulated features back into individual modalities
+        output_features = torch.chunk(accumulated_features, num_modalities, dim=0)
+
+        return output_features, edge_index
+
 
 
 class Heterogeneous_GraphConvL(torch.nn.Module):
