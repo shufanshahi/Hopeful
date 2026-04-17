@@ -480,3 +480,65 @@ class SentenceMatchingModule(nn.Module):
             )
 
         return concatenated_pairwise
+
+
+def create_pairwise_sentence_labels(shift_win, dia_lengths, label_sen):
+    """
+    Build label shifts for sentence matching with optional sliding window.
+    
+    Args:
+        shift_win: Window size for comparison. -1 for all pairs, >0 for sliding windows
+        dia_lengths: List of dialogue lengths
+        label_sen: Tensor of sentence labels
+        
+    Returns:
+        label_shift: Tensor containing binary comparisons of labels
+    """
+    dialogue_start = 0
+    shift_list = []
+    
+    if shift_win == -1:
+        # Compare all label pairs within each dialogue
+        for dialogue_length in dia_lengths:
+            dialogue_label_shift = (
+                (label_sen[dialogue_start:dialogue_start + dialogue_length, None]
+                 != label_sen[None, dialogue_start:dialogue_start + dialogue_length])
+                .long()
+                .view(-1)
+            )
+            shift_list.append(dialogue_label_shift)
+            dialogue_start += dialogue_length
+        label_shift = torch.cat(shift_list, dim=0)
+        
+    elif shift_win > 0:
+        # Compare label pairs within sliding windows
+        for dialogue_length in dia_lengths:
+            window_start = 0
+            num_windows = math.ceil(dialogue_length / shift_win)
+            
+            for window_idx in range(num_windows):
+                # Determine actual window size (last window may be smaller)
+                if window_idx == num_windows - 1 and dialogue_length % shift_win != 0:
+                    current_window_size = dialogue_length % shift_win
+                else:
+                    current_window_size = shift_win
+                
+                # Extract and compare labels within current window
+                window_end = window_start + current_window_size
+                dialogue_label_shift = (
+                    (label_sen[dialogue_start + window_start:dialogue_start + window_end, None]
+                     != label_sen[None, dialogue_start + window_start:dialogue_start + window_end])
+                    .long()
+                    .view(-1)
+                )
+                shift_list.append(dialogue_label_shift)
+                window_start += shift_win
+            
+            dialogue_start += dialogue_length
+        label_shift = torch.cat(shift_list, dim=0)
+        
+    else:
+        print('Window must be greater than 0 or equal to -1')
+        raise NotImplementedError
+
+    return label_shift
