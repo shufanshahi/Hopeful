@@ -7,7 +7,7 @@ from helpers import create_pairwise_sentence_labels
 
 seed = 2024
 
-def set_seed(seed):
+def set_seed(seed=seed):
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
